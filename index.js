@@ -1,7 +1,7 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 var cors = require("cors");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 const app = express();
 //middle ware
@@ -10,6 +10,8 @@ app.use(express.json());
 const port = process.env.PORT || 5000;
 const password = process.env.DB_PASSWORD;
 const user = process.env.DB_USER;
+const stripe = require('stripe')(process.env.STRIPE_SECRETE_KEY)
+
 const uri = `mongodb+srv://${user}:${password}@cluster0.6jgcl3u.mongodb.net/?retryWrites=true&w=majority`;
 const client = new MongoClient(uri, {
   useNewUrlParser: true,
@@ -35,6 +37,7 @@ async function run() {
     const database = client.db("doctors_portal");
     const servicesCollection = database.collection("services");
     const bookingCollection = database.collection("bookings");
+    const paymentCollection = database.collection("payments");
     const userCollection = database.collection("users");
     const doctorCollection = database.collection("doctors");
    
@@ -131,6 +134,26 @@ async function run() {
         return res.status(403).send({ message: "Forbidden Access" });
       }
     });
+    app.get("/booking/:id",verifyJWT, async(req,res)=>{
+      const id = req.params.id;
+      const query={_id: new ObjectId(id)}
+      const result = await bookingCollection.findOne(query)
+      res.send(result);
+    })
+    app.patch("/booking/:id",verifyJWT, async(req,res)=>{
+      const id = req.params.id;
+      const filter={_id: new ObjectId(id)}
+      const payment = req.body;
+      const updatedDoc ={
+        $set:{
+          paid: true,
+          transactionId: payment.transactionId 
+        }
+      }
+      const updatedBooking = await bookingCollection.updateOne(filter,updatedDoc);
+      const result = await paymentCollection.insertOne(payment)
+      res.send(updatedDoc);
+    })
     app.post("/booking", async (req, res) => {
       const booking = req.body;
       const query = {
@@ -160,8 +183,24 @@ async function run() {
       const result = await doctorCollection.insertOne(doctor);
       res.send(result)
     })
+    app.post("/create-payments-intent",verifyJWT, async(req,res)=>{
+        const service = req.body;
+        const price = service.price;
+        const amount = price*10;
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount,
+          currency: "usd",
+          automatic_payment_methods: {
+            enabled: true,
+          },
+        });
+        res.send({
+          clientSecret: paymentIntent.client_secret,
+        });
+    })
   } finally {
   }
+
 }
 run().catch(console.dir);
 app.get("/", (req, res) => {
